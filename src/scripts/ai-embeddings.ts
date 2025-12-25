@@ -1,4 +1,4 @@
-import { createSwRpcClient, registerServiceWorker } from './sw-rpc';
+import { createEmbeddingsWorker, createWorkerRpcClient } from './worker-rpc';
 import {
   clearEmbeddingsStore,
   computeEmbeddingIdentity,
@@ -24,14 +24,15 @@ const DEFAULT_MODEL: EmbeddingModelConfig = {
   device: 'wasm',
 };
 
-let rpc: ReturnType<typeof createSwRpcClient> | null = null;
-let swReady = false;
+let rpc: ReturnType<typeof createWorkerRpcClient> | null = null;
+let worker: Worker | null = null;
+let ready = false;
 
 export async function ensureSwReady() {
-  if (swReady) return;
-  await registerServiceWorker('/sw.js');
-  rpc = createSwRpcClient();
-  swReady = true;
+  if (ready) return;
+  worker = await createEmbeddingsWorker('/embeddings-worker.js');
+  rpc = createWorkerRpcClient(worker);
+  ready = true;
 }
 
 export async function initEmbeddingModel(

@@ -24,6 +24,25 @@ export const prerender = false;
           >
           <div id='save-status' class='text-sm text-gray-600'></div>
         </div>
+
+        <div
+          id='progress'
+          class='hidden mb-5 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3'
+        >
+          <div class='flex items-center justify-between text-sm text-gray-700'>
+            <span id='progress-label'></span>
+            <span id='progress-value' class='tabular-nums'></span>
+          </div>
+          <div class='h-2 rounded-full bg-gray-200 overflow-hidden'>
+            <div
+              id='progress-bar'
+              class='h-full bg-gray-900 transition-all duration-300'
+              style='width: 0%'
+            >
+            </div>
+          </div>
+        </div>
+
         <div id='app'></div>
       </div>
     </div>
@@ -98,14 +117,117 @@ export const prerender = false;
 
   crepe.setReadonly(false);
 
+  const saveBtn = document.querySelector(
+    '#save-btn',
+  ) as HTMLButtonElement | null;
+  const saveStatus = document.querySelector('#save-status');
+  const progressBox = document.querySelector(
+    '#progress',
+  ) as HTMLDivElement | null;
+  const progressLabel = document.querySelector(
+    '#progress-label',
+  ) as HTMLSpanElement | null;
+  const progressValue = document.querySelector(
+    '#progress-value',
+  ) as HTMLSpanElement | null;
+  const progressBar = document.querySelector(
+    '#progress-bar',
+  ) as HTMLDivElement | null;
+  let hideProgressTimer: number | null = null;
+
+  const renderProgress = (
+    state: { label: string; percent: number | null } | null,
+  ) => {
+    if (!progressBox || !progressLabel || !progressValue || !progressBar)
+      return;
+
+    if (hideProgressTimer) {
+      window.clearTimeout(hideProgressTimer);
+      hideProgressTimer = null;
+    }
+
+    if (!state) {
+      progressBox.classList.add('hidden');
+      progressLabel.textContent = '';
+      progressValue.textContent = '';
+      progressBar.style.width = '0%';
+      progressBar.style.opacity = '1';
+      return;
+    }
+
+    progressBox.classList.remove('hidden');
+    progressLabel.textContent = state.label || '';
+
+    if (state.percent === null || Number.isNaN(state.percent)) {
+      progressValue.textContent = '';
+      progressBar.style.width = '100%';
+      progressBar.style.opacity = '0.35';
+      return;
+    }
+
+    const pct = Math.max(0, Math.min(100, Math.round(state.percent)));
+    progressValue.textContent = `${pct}%`;
+    progressBar.style.width = `${pct}%`;
+    progressBar.style.opacity = '1';
+  };
+
+  const scheduleHideProgress = (delay = 1200) => {
+    if (hideProgressTimer) window.clearTimeout(hideProgressTimer);
+    hideProgressTimer = window.setTimeout(() => renderProgress(null), delay);
+  };
+
+  const normalizeProgressPayload = (payload: any) => {
+    if (!payload || typeof payload !== 'object') return null;
+
+    const phase = payload.phase || '';
+    const message = payload.label || payload.message;
+    const pct = Number.isFinite(payload.percent)
+      ? Math.round(payload.percent)
+      : null;
+
+    if (
+      phase === 'running' &&
+      typeof payload.total === 'number' &&
+      payload.total > 0
+    ) {
+      const position =
+        typeof payload.index === 'number'
+          ? Math.min(payload.index + 1, payload.total)
+          : payload.total;
+      const percent =
+        payload.percent != null
+          ? pct
+          : Math.round((position / payload.total) * 100);
+
+      return {
+        label: `Procesando ${position}/${payload.total}`,
+        percent: percent,
+      };
+    }
+
+    return {
+      label: message || 'Descargando modelo',
+      percent: pct,
+    };
+  };
+
+  const handleProgress = (payload: unknown) => {
+    const next = normalizeProgressPayload(payload as any);
+    if (next) renderProgress(next);
+  };
+
   (async () => {
     try {
+      renderProgress({ label: 'Cargando modelo', percent: 0 });
       await ensureSwReady();
-      console.log('Service Worker listo para embeddings');
+      console.log('Worker listo para embeddings');
+
+      // Precargar modelo al abrir la página
+      await initEmbeddingModel(MODEL, handleProgress);
+      renderProgress({ label: 'Modelo listo', percent: 100 });
+      scheduleHideProgress();
 
       // API mínima para probar desde DevTools:
-      // await window.aiEmbeddings.init({ device: 'wasm' })
-      // await window.aiEmbeddings.embedPost({ postId: 'demo', text: 'passage: hola mundo' })
       window.aiEmbeddings = {
         init: initEmbeddingModel,
         embedPost,
@@ -113,20 +235,17 @@ export const prerender = false;
         clearCaches: clearAllEmbeddingsCaches,
       };
     } catch (e) {
-      console.warn('No se pudo inicializar Service Worker de embeddings:', e);
+      console.warn('No se pudo inicializar embeddings:', e);
+      renderProgress({ label: 'No se pudo cargar el modelo', percent: null });
     }
   })();
-
-  const saveBtn = document.querySelector(
-    '#save-btn',
-  ) as HTMLButtonElement | null;
-  const saveStatus = document.querySelector('#save-status');
 
   saveBtn?.addEventListener('click', async () => {
     if (!saveBtn || !saveStatus) return;
 
     saveBtn.disabled = true;
     saveStatus.textContent = 'Guardando…';
+    renderProgress({ label: 'Generando embeddings', percent: 0 });
 
     try {
       const rawMarkdown = await crepe.getMarkdown();
@@ -155,6 +274,7 @@ export const prerender = false;
         postId: saved.id,
         text: embeddingText,
         model: MODEL,
+        onProgress: handleProgress,
       });
 
       const { error: embError } = await actions.documents.upsertEmbeddings({
@@ -180,9 +300,12 @@ export const prerender = false;
       }
 
       saveStatus.textContent = 'Guardado.';
+      renderProgress({ label: 'Embeddings listos', percent: 100 });
+      scheduleHideProgress();
     } catch (e) {
       console.error(e);
       saveStatus.textContent = 'Error inesperado al guardar.';
+      renderProgress({ label: 'Error generando embedding', percent: null });
     } finally {
       saveBtn.disabled = false;
     }

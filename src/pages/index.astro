@@ -1,57 +1,43 @@
 ---
-import { Font } from 'astro:assets';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
 import '../styles/global.css';
-import { Button } from '@/components/ui/button';
+import Layout from '@/layouts/layout.astro';
+import { ManagementBar } from '@/components/editor-header';
 
 export const prerender = false;
 ---
 
-<html lang='es'>
-  <head>
-    <meta charset='utf-8' />
-    <link rel='icon' type='image/svg+xml' href='/favicon.svg' />
-    <meta name='viewport' content='width=device-width' />
-    <meta name='generator' content={Astro.generator} />
-    <Font cssVariable='--font-inter' preload />
-    <title>AI blog</title>
-  </head>
-  <body>
-    <div class='flex justify-center min-h-screen bg-white'>
-      <div class='min-w-230 p-9 bg-white'>
-        <div class='flex items-center gap-3 mb-4'>
-          <Button id='save-btn' variant='outline' client:load>Guardar</Button>
-          <div id='save-status' class='text-sm text-gray-600'></div>
-        </div>
-
-        <div
-          id='progress'
-          class='hidden mb-5 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-3'
-        >
-          <div class='flex items-center justify-between text-sm text-gray-700'>
-            <span id='progress-label'></span>
-            <span id='progress-value' class='tabular-nums'></span>
-          </div>
-          <div class='h-2 rounded-full bg-gray-200 overflow-hidden'>
-            <div
-              id='progress-bar'
-              class='h-full bg-gray-900 transition-all duration-300'
-              style='width: 0%'
-            >
-            </div>
-          </div>
-        </div>
-
-        <div id='app'></div>
-      </div>
+<Layout>
+  <div class='w-full flex justify-center relative'>
+    <div class='w-full max-w-7xl'>
+      <ManagementBar client:load />
+      <div id='app' class='w-full min-h-[70vh]'></div>
+      <input
+        id='import-md-input'
+        type='file'
+        accept='.md,text/markdown,text/plain'
+        class='hidden'
+      />
     </div>
-  </body>
-</html>
+  </div>
+</Layout>
 
 <script>
   import { Crepe } from '@milkdown/crepe';
   import { actions } from 'astro:actions';
+  import {
+    resetEmbeddingProgress,
+    resetSaveStatus,
+    setEmbeddingProgress,
+    setLastMarkdownSnapshot,
+    setModelError,
+    setModelLoading,
+    setModelReady,
+    setSaveError,
+    setSaveSaving,
+    setSaveSuccess,
+  } from '../store/editor-store';
   import {
     clearAllEmbeddingsCaches,
     embedPost,
@@ -97,62 +83,34 @@ export const prerender = false;
 
   crepe.setReadonly(false);
 
-  const saveBtn = document.querySelector(
-    '#save-btn',
-  ) as HTMLButtonElement | null;
-  /** @type {HTMLElement|null} */
-  const saveStatus = document.querySelector('#save-status');
-  /** @type {HTMLDivElement|null} */
-  const progressBox = document.querySelector('#progress');
-  /** @type {HTMLSpanElement|null} */
-  const progressLabel = document.querySelector('#progress-label');
-  /** @type {HTMLSpanElement|null} */
-  const progressValue = document.querySelector('#progress-value');
-  /** @type {HTMLDivElement|null} */
-  const progressBar = document.querySelector('#progress-bar') as HTMLDivElement;
-  /** @type {number|null} */
-  let hideProgressTimer: number | null = null;
+  const importMdInput = document.querySelector(
+    '#import-md-input',
+  ) as HTMLInputElement | null;
 
-  const renderProgress = (
-    state: { label?: string; percent?: number | null } | null,
-  ) => {
-    if (!progressBox || !progressLabel || !progressValue || !progressBar)
-      return;
-
-    if (hideProgressTimer) {
-      window.clearTimeout(hideProgressTimer);
-      hideProgressTimer = null;
-    }
-
-    if (!state) {
-      progressBox.classList.add('hidden');
-      progressLabel.textContent = '';
-      progressValue.textContent = '';
-      progressBar.style.width = '0%';
-      progressBar.style.opacity = '1';
-      return;
-    }
-
-    progressBox.classList.remove('hidden');
-    progressLabel.textContent = state.label || '';
-
-    if (state.percent === null || Number.isNaN(state.percent)) {
-      progressValue.textContent = '';
-      progressBar.style.width = '100%';
-      progressBar.style.opacity = '0.35';
-      return;
-    }
-
-    const pct = Math.max(0, Math.min(100, Math.round(state.percent || 0)));
-    progressValue.textContent = `${pct}%`;
-    progressBar.style.width = `${pct}%`;
-    progressBar.style.opacity = '1';
+  const setEditorMarkdown = async (md: string) => {
+    const api = crepe as any;
+    if (typeof api.setMarkdown === 'function') return api.setMarkdown(md);
+    if (typeof api.setValue === 'function') return api.setValue(md);
+    console.warn('Crepe no expone setMarkdown/setValue; no se pudo importar.');
   };
 
-  const scheduleHideProgress = (delay = 1200) => {
-    if (hideProgressTimer) window.clearTimeout(hideProgressTimer);
-    hideProgressTimer = window.setTimeout(() => renderProgress(null), delay);
-  };
+  importMdInput?.addEventListener('change', async () => {
+    const file = importMdInput.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      await setEditorMarkdown(text);
+    } catch (e) {
+      console.error('Error importando markdown:', e);
+    } finally {
+      importMdInput.value = '';
+    }
+  });
+
+  // API mínima para el menubar (export/import)
+  (window as any).__editorGetMarkdown = () => crepe.getMarkdown();
+  (window as any).__editorInferTitle = inferTitle;
 
   const normalizeProgressPayload = (payload: any) => {
     if (!payload || typeof payload !== 'object') return null;
@@ -189,21 +147,18 @@ export const prerender = false;
     };
   };
 
-  const handleProgress = (payload: any) => {
-    const next = normalizeProgressPayload(payload);
-    if (next) renderProgress(next);
-  };
-
   (async () => {
     try {
-      renderProgress({ label: 'Cargando modelo', percent: 0 });
+      setModelLoading({ label: 'Cargando modelo', percent: 0 });
       await ensureSwReady();
       console.log('Worker listo para embeddings');
 
       // Precargar modelo al abrir la página
-      await initEmbeddingModel(MODEL, handleProgress);
-      renderProgress({ label: 'Modelo listo', percent: 100 });
-      scheduleHideProgress();
+      await initEmbeddingModel(MODEL, (payload: any) => {
+        const next = normalizeProgressPayload(payload);
+        if (next) setModelLoading(next);
+      });
+      setModelReady();
 
       // API mínima para probar desde DevTools:
       window.aiEmbeddings = {
@@ -214,20 +169,22 @@ export const prerender = false;
       };
     } catch (e) {
       console.warn('No se pudo inicializar embeddings:', e);
-      renderProgress({ label: 'No se pudo cargar el modelo', percent: null });
+      setModelError('No se pudo cargar el modelo');
     }
   })();
 
-  saveBtn?.addEventListener('click', async () => {
-    if (!saveBtn || !saveStatus) return;
-
-    saveBtn.disabled = true;
-    saveStatus.textContent = 'Guardando…';
-    renderProgress({ label: 'Generando embeddings', percent: 0 });
+  let isSaving = false;
+  const dispatchSave = async () => {
+    if (isSaving) return;
+    isSaving = true;
+    setSaveSaving('Guardando…');
+    setEmbeddingProgress({ label: 'Generando embeddings', percent: 0 });
 
     try {
       const rawMarkdown = await crepe.getMarkdown();
+      setLastMarkdownSnapshot(rawMarkdown);
       const title = inferTitle(rawMarkdown);
+
       const { data: saved, error: saveError } = await actions.documents.save({
         // Nuevo siempre: no enviar id/slug
         title,
@@ -237,16 +194,24 @@ export const prerender = false;
 
       if (saveError) {
         console.error(saveError);
-        saveStatus.textContent = 'Error guardando documento.';
+        setSaveError('Error guardando documento.');
+        setEmbeddingProgress({
+          label: 'Error generando embedding',
+          percent: null,
+        });
         return;
       }
+
       // Embedding (1 chunk, todo el documento)
       const embeddingText = `passage: ${rawMarkdown}`;
       const embedding = await embedPost({
         postId: saved.id,
         text: embeddingText,
         model: MODEL,
-        onProgress: handleProgress,
+        onProgress: (payload: any) => {
+          const next = normalizeProgressPayload(payload);
+          if (next) setEmbeddingProgress(next);
+        },
       });
 
       const { error: embError } = await actions.documents.upsertEmbeddings({
@@ -266,20 +231,109 @@ export const prerender = false;
 
       if (embError) {
         console.error(embError);
-        saveStatus.textContent =
-          'Documento guardado; error guardando embedding.';
+        setSaveError('Documento guardado; error guardando embedding.');
         return;
       }
 
-      saveStatus.textContent = 'Guardado.';
-      renderProgress({ label: 'Embeddings listos', percent: 100 });
-      scheduleHideProgress();
+      setSaveSuccess('Guardado.');
+      resetEmbeddingProgress();
+      window.setTimeout(() => {
+        resetSaveStatus();
+      }, 1400);
     } catch (e) {
       console.error(e);
-      saveStatus.textContent = 'Error inesperado al guardar.';
-      renderProgress({ label: 'Error generando embedding', percent: null });
+      setSaveError('Error inesperado al guardar.');
+      setEmbeddingProgress({
+        label: 'Error generando embedding',
+        percent: null,
+      });
     } finally {
-      saveBtn.disabled = false;
+      isSaving = false;
+    }
+  };
+
+  document.addEventListener('keydown', (e) => {
+    const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+    if (!isCmdOrCtrl) return;
+    if (e.key.toLowerCase() !== 's') return;
+    if (e.repeat) return;
+    e.preventDefault();
+    void dispatchSave();
+  });
+
+  const downloadTextFile = (
+    filename: string,
+    content: string,
+    mime: string,
+  ) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const sanitizeFilename = (name: string) =>
+    String(name || 'documento')
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'documento';
+
+  window.addEventListener('editor:save', () => {
+    void dispatchSave();
+  });
+
+  window.addEventListener('editor:importMarkdown', () => {
+    importMdInput?.click();
+  });
+
+  window.addEventListener('editor:exportMarkdown', async () => {
+    try {
+      const rawMarkdown = await crepe.getMarkdown();
+      setLastMarkdownSnapshot(rawMarkdown);
+      const title = inferTitle(rawMarkdown);
+      const filename = `${sanitizeFilename(title)}.md`;
+      downloadTextFile(filename, rawMarkdown, 'text/markdown;charset=utf-8');
+    } catch (e) {
+      console.error('Error exportando markdown:', e);
+    }
+  });
+
+  window.addEventListener('editor:exportPdf', async () => {
+    try {
+      const rawMarkdown = await crepe.getMarkdown();
+      setLastMarkdownSnapshot(rawMarkdown);
+      const title = inferTitle(rawMarkdown);
+
+      // Export PDF: usar el diálogo de impresión para “Guardar como PDF”.
+      const w = window.open('', '_blank', 'noopener,noreferrer');
+      if (!w) return;
+
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8" />`);
+      w.document.write(`<title>${title}</title>`);
+      w.document.write(
+        `<style>body{font-family:ui-sans-serif,system-ui; padding:24px;} pre{white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; line-height:1.5}</style>`,
+      );
+      w.document.write(`</head><body>`);
+      w.document.write(`<h1>${title}</h1>`);
+      const safe = rawMarkdown
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      w.document.write(`<pre>${safe}</pre>`);
+      w.document.write(`</body></html>`);
+      w.document.close();
+
+      w.focus();
+      w.print();
+    } catch (e) {
+      console.error('Error exportando PDF:', e);
     }
   });
 </script>

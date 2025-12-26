@@ -1,0 +1,25 @@
+---
+import { Font } from 'astro:assets';
+
+interface Props {
+  title?: string;
+}
+
+let { title = 'AI blog' } = Astro.props;
+---
+
+<html lang='es'>
+  <head>
+    <meta charset='utf-8' />
+    <link rel='icon' type='image/svg+xml' href='/favicon.svg' />
+    <meta name='viewport' content='width=device-width' />
+    <meta name='generator' content={Astro.generator} />
+    <Font cssVariable='--font-inter' preload />
+    <title>{title}</title>
+  </head>
+  <body class='min-h-screen w-full bg-background'>
+    <div class='mx-auto w-full max-w-190 sm:p-9'>
+      <slot />
+    </div>
+  </body>
+</html>

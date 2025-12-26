@@ -1,5 +1,5 @@
 @import 'tailwindcss';
-@import "tw-animate-css";
+@import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -129,5 +129,9 @@ h1 {
   }
   body {
     @apply bg-background text-foreground;
+  }
+
+  .milkdown .ProseMirror {
+    padding: 0 !important;
   }
 }

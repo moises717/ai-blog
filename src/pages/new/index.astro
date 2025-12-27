@@ -1,0 +1,400 @@
+---
+import '@milkdown/crepe/theme/common/style.css';
+import '@milkdown/crepe/theme/frame.css';
+import Layout from '@/layouts/layout.astro';
+import { ManagementBar } from '@/components/editor-header';
+
+export const prerender = false;
+---
+
+<Layout>
+  <div class='w-full flex justify-center relative'>
+    <div class='w-full max-w-7xl'>
+      <ManagementBar client:load />
+      <div id='app' class='w-full min-h-[70vh]'></div>
+      <input
+        id='import-md-input'
+        type='file'
+        accept='.md,text/markdown,text/plain'
+        class='hidden'
+      />
+    </div>
+  </div>
+</Layout>
+
+<script>
+  import { Crepe } from '@milkdown/crepe';
+  import { replaceAll } from '@milkdown/kit/utils';
+  import { actions } from 'astro:actions';
+  import {
+    resetEmbeddingProgress,
+    resetSaveStatus,
+    setEmbeddingProgress,
+    setLastMarkdownSnapshot,
+    setModelError,
+    setModelLoading,
+    setModelReady,
+    setSaveError,
+    setSaveSaving,
+    setSaveSuccess,
+  } from '../../store/editor-store';
+  import {
+    clearAllEmbeddingsCaches,
+    embedPost,
+    ensureSwReady,
+    initEmbeddingModel,
+    swStatus,
+  } from '../../scripts/ai-embeddings';
+
+  const MODEL = {
+    modelId: 'Xenova/multilingual-e5-large',
+    device: 'wasm',
+  } as const;
+  const STORAGE_KEY = 'ai-editor:current-document';
+  function inferTitle(md: string): string {
+    const lines = String(md || '').split(/\r?\n/);
+    for (const line of lines) {
+      const m = /^\s*#\s+(.+)\s*$/.exec(line);
+      if (m?.[1]) return m[1].trim().slice(0, 120);
+    }
+    for (const line of lines) {
+      const t = line.trim();
+      if (t) return t.slice(0, 120);
+    }
+    return 'Sin título';
+  }
+
+  // Guardar actualiza el mismo documento hasta que el usuario presione "Nuevo".
+  function loadCurrentDoc() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const id = parsed.id;
+      const slug = parsed.slug;
+      if (typeof id !== 'string' || typeof slug !== 'string') return null;
+      if (!id || !slug) return null;
+      return { id, slug } as const;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCurrentDoc(doc: { id: string; slug: string }) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(doc));
+  }
+
+  function clearCurrentDoc() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  const crepe = new Crepe({
+    root: '#app',
+    defaultValue: '#',
+    featureConfigs: {
+      placeholder: {
+        text: 'Nueva pagina',
+        mode: 'block',
+      },
+    },
+  });
+
+  crepe.create().then(() => {
+    console.log('Editor created');
+  });
+
+  crepe.setReadonly(false);
+
+  let currentDoc = loadCurrentDoc();
+
+  const importMdInput = document.querySelector(
+    '#import-md-input',
+  ) as HTMLInputElement | null;
+
+  const setEditorMarkdown = async (md: string = '#') => {
+    crepe.editor.action(replaceAll(md));
+  };
+
+  crepe.on((api) => {
+    api.updated((ctx) => {
+      console.log('Editor updated');
+    });
+  });
+
+  importMdInput?.addEventListener('change', async () => {
+    const file = importMdInput.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      await setEditorMarkdown(text);
+    } catch (e) {
+      console.error('Error importando markdown:', e);
+    } finally {
+      importMdInput.value = '';
+    }
+  });
+
+  // API mínima para el menubar (export/import)
+  (window as any).__editorGetMarkdown = () => crepe.getMarkdown();
+  (window as any).__editorInferTitle = inferTitle;
+
+  const normalizeProgressPayload = (payload: any) => {
+    if (!payload || typeof payload !== 'object') return null;
+
+    const phase = payload.phase || '';
+    const message = payload.label || payload.message;
+    const pct = Number.isFinite(payload.percent)
+      ? Math.round(payload.percent)
+      : null;
+
+    if (
+      phase === 'running' &&
+      typeof payload.total === 'number' &&
+      payload.total > 0
+    ) {
+      const position =
+        typeof payload.index === 'number'
+          ? Math.min(payload.index + 1, payload.total)
+          : payload.total;
+      const percent =
+        payload.percent != null
+          ? pct
+          : Math.round((position / payload.total) * 100);
+
+      return {
+        label: `Procesando ${position}/${payload.total}`,
+        percent: percent,
+      };
+    }
+
+    return {
+      label: message || 'Descargando modelo',
+      percent: pct,
+    };
+  };
+
+  (async () => {
+    try {
+      setModelLoading({ label: 'Cargando modelo', percent: 0 });
+      await ensureSwReady();
+      console.log('Worker listo para embeddings');
+
+      // Precargar modelo al abrir la página
+      await initEmbeddingModel(MODEL, (payload: any) => {
+        const next = normalizeProgressPayload(payload);
+        if (next) setModelLoading(next);
+      });
+      setModelReady();
+
+      // API mínima para probar desde DevTools:
+      window.aiEmbeddings = {
+        init: initEmbeddingModel,
+        embedPost,
+        status: swStatus,
+        clearCaches: clearAllEmbeddingsCaches,
+      };
+    } catch (e) {
+      console.warn('No se pudo inicializar embeddings:', e);
+      setModelError('No se pudo cargar el modelo');
+    }
+  })();
+
+  let isSaving = false;
+  const dispatchSave = async () => {
+    if (isSaving) return;
+    isSaving = true;
+    setSaveSaving('Guardando…');
+    setEmbeddingProgress({ label: 'Generando embeddings', percent: 0 });
+
+    try {
+      const rawMarkdown = await crepe.getMarkdown();
+      setLastMarkdownSnapshot(rawMarkdown);
+      const title = inferTitle(rawMarkdown);
+
+      const performSave = async (retry?: boolean) => {
+        const res = await actions.documents.save({
+          id: currentDoc?.id || undefined,
+          slug: currentDoc?.slug || undefined,
+          title,
+          rawMarkdown,
+          metadata: {},
+        });
+
+        // Si el doc apuntado por id/slug no existe, limpiar estado y reintentar insert una vez
+        const notFound =
+          res.error?.code === 'NOT_FOUND' ||
+          /no encontrado/i.test(res.error?.message || '');
+        if (!res.data && notFound && currentDoc && !retry) {
+          currentDoc = null;
+          clearCurrentDoc();
+          return await performSave(true);
+        }
+        return res;
+      };
+
+      const { data: saved, error: saveError } = await performSave();
+
+      if (saveError) {
+        console.error(saveError);
+        setSaveError('Error guardando documento.');
+        setEmbeddingProgress({
+          label: 'Error generando embedding',
+          percent: null,
+        });
+        return;
+      }
+
+      // Embedding (1 chunk, todo el documento)
+      const embeddingText = `passage: ${rawMarkdown}`;
+      const embedding = await embedPost({
+        postId: saved.id,
+        text: embeddingText,
+        model: MODEL,
+        onProgress: (payload: any) => {
+          const next = normalizeProgressPayload(payload);
+          if (next) setEmbeddingProgress(next);
+        },
+      });
+
+      const { error: embError } = await actions.documents.upsertEmbeddings({
+        documentId: saved.id,
+        items: [
+          {
+            chunkIndex: 0,
+            chunkText: rawMarkdown,
+            embedding,
+            modelId: MODEL.modelId,
+            device: MODEL.device,
+            pooling: 'mean',
+            normalize: true,
+          },
+        ],
+      });
+
+      if (embError) {
+        console.error(embError);
+        setSaveError('Documento guardado; error guardando embedding.');
+        return;
+      }
+
+      currentDoc = { id: saved.id, slug: saved.slug };
+      saveCurrentDoc(currentDoc);
+
+      setSaveSuccess('Guardado.');
+      resetEmbeddingProgress();
+      window.setTimeout(() => {
+        resetSaveStatus();
+      }, 1400);
+    } catch (e) {
+      console.error(e);
+      setSaveError('Error inesperado al guardar.');
+      setEmbeddingProgress({
+        label: 'Error generando embedding',
+        percent: null,
+      });
+    } finally {
+      isSaving = false;
+    }
+  };
+
+  document.addEventListener('keydown', (e) => {
+    const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+    if (!isCmdOrCtrl) return;
+    if (e.key.toLowerCase() !== 's') return;
+    if (e.repeat) return;
+    e.preventDefault();
+    void dispatchSave();
+  });
+
+  window.addEventListener('editor:new', () => {
+    void resetEditorToNew();
+  });
+
+  const resetEditorToNew = async () => {
+    currentDoc = null;
+    clearCurrentDoc();
+    await setEditorMarkdown('#');
+    setLastMarkdownSnapshot('#');
+    resetEmbeddingProgress();
+    setSaveSuccess('Nuevo documento listo');
+    window.setTimeout(() => resetSaveStatus(), 1200);
+  };
+
+  const downloadTextFile = (
+    filename: string,
+    content: string,
+    mime: string,
+  ) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const sanitizeFilename = (name: string) =>
+    String(name || 'documento')
+      .replace(/[\\/:*?"<>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'documento';
+
+  window.addEventListener('editor:save', () => {
+    void dispatchSave();
+  });
+
+  window.addEventListener('editor:importMarkdown', () => {
+    importMdInput?.click();
+  });
+
+  window.addEventListener('editor:exportMarkdown', async () => {
+    try {
+      const rawMarkdown = await crepe.getMarkdown();
+      setLastMarkdownSnapshot(rawMarkdown);
+      const title = inferTitle(rawMarkdown);
+      const filename = `${sanitizeFilename(title)}.md`;
+      downloadTextFile(filename, rawMarkdown, 'text/markdown;charset=utf-8');
+    } catch (e) {
+      console.error('Error exportando markdown:', e);
+    }
+  });
+
+  window.addEventListener('editor:exportPdf', async () => {
+    try {
+      const rawMarkdown = await crepe.getMarkdown();
+      setLastMarkdownSnapshot(rawMarkdown);
+      const title = inferTitle(rawMarkdown);
+
+      // Export PDF: usar el diálogo de impresión para “Guardar como PDF”.
+      const w = window.open('', '_blank', 'noopener,noreferrer');
+      if (!w) return;
+
+      w.document.open();
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8" />`);
+      w.document.write(`<title>${title}</title>`);
+      w.document.write(
+        `<style>body{font-family:ui-sans-serif,system-ui; padding:24px;} pre{white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; line-height:1.5}</style>`,
+      );
+      w.document.write(`</head><body>`);
+      w.document.write(`<h1>${title}</h1>`);
+      const safe = rawMarkdown
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      w.document.write(`<pre>${safe}</pre>`);
+      w.document.write(`</body></html>`);
+      w.document.close();
+
+      w.focus();
+      w.print();
+    } catch (e) {
+      console.error('Error exportando PDF:', e);
+    }
+  });
+</script>

@@ -11,6 +11,7 @@ h1 {
   font-weight: 900 !important;
   font-family: var(--font-serif);
   @apply text-gray-700;
+  font-size: 34px !important;
 }
 
 @theme inline {

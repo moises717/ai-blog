@@ -26,83 +26,111 @@ export const prerender = false;
   import { Crepe } from '@milkdown/crepe';
   import { editorViewCtx, prosePluginsCtx } from '@milkdown/core';
   import { keymap } from '@milkdown/prose/keymap';
-  import { editorInstance } from '@/store/editor-store';
+  import { editorInstance, setCurrentTitle } from '@/store/editor-store';
+  import { disposeEmbeddingsClient } from '@/scripts/ai-embeddings';
 
-  const crepe = new Crepe({
-    root: '#app',
-    defaultValue: '# ',
-    featureConfigs: {
-      placeholder: {
-        text: 'Nueva pagina',
-        mode: 'block',
-      },
-    },
-  });
+  let crepeInstance: Crepe | null = null;
 
-  crepe.editor.config((ctx) => {
-    ctx.update(prosePluginsCtx, (prev) => [
-      ...prev,
-      keymap({
-        Backspace: (state) => {
-          const { selection } = state;
-          const { $from, empty } = selection;
+  async function initEditor() {
+    if (crepeInstance) {
+      crepeInstance.destroy();
+      crepeInstance = null;
+    }
 
-          // 1. Si el usuario tiene texto seleccionado (ej. Ctrl+A),
-          // PERMITIMOS borrar (retornamos false).
-          // El listener 'api.updated' se encargará si rompen el formato.
-          if (!empty) return false;
-
-          // ¿Estamos en el primer nodo del documento?
-          if ($from.index(0) !== 0) return false;
-
-          // ¿El cursor está al mero principio del texto?
-          if ($from.parentOffset !== 0) return false;
-
-          // ¿Es un H1?
-          const node = $from.parent;
-          if (node.type.name === 'heading' && node.attrs.level === 1) {
-            // Bloqueamos la acción. El usuario presiona Backspace pero no pasa nada.
-            // El H1 se mantiene intacto.
-            return true;
-          }
-
-          return false;
+    crepeInstance = new Crepe({
+      root: '#app',
+      defaultValue: '# ',
+      featureConfigs: {
+        placeholder: {
+          text: 'Nueva pagina',
+          mode: 'block',
         },
-      }),
-    ]);
-  });
-
-  crepe.on((api) => {
-    api.updated((ctx) => {
-      // 1. Obtenemos la vista técnica del editor
-      const view = ctx.get(editorViewCtx);
-      const { state } = view;
-      const firstChild = state.doc.firstChild;
-
-      // Seguridad: Si el documento está vacío, no hacemos nada
-      if (!firstChild) return;
-
-      // 2. Verificamos: ¿Es el primer bloque un Título H1?
-      const esTituloH1 =
-        firstChild.type.name === 'heading' && firstChild.attrs.level === 1;
-
-      // 3. Si NO es H1 (porque el usuario borró el #), lo arreglamos
-      if (!esTituloH1) {
-        // Ejecutamos una transacción para cambiar el tipo de nodo a Heading H1
-        // manteniendo el texto que tenga escrito.
-        const tr = state.tr.setNodeMarkup(0, state.schema.nodes.heading, {
-          level: 1,
-        });
-
-        // Aplicamos el cambio inmediatamente
-        view.dispatch(tr);
-      }
-
-      console.log('Editor updated (checked title)');
+      },
     });
-  });
 
-  crepe.create().then(() => {
-    editorInstance.set(crepe);
+    crepeInstance.editor.config((ctx) => {
+      ctx.update(prosePluginsCtx, (prev) => [
+        ...prev,
+        keymap({
+          Backspace: (state) => {
+            const { selection } = state;
+            const { $from, empty } = selection;
+
+            // 1. Si el usuario tiene texto seleccionado (ej. Ctrl+A),
+            // PERMITIMOS borrar (retornamos false).
+            // El listener 'api.updated' se encargará si rompen el formato.
+            if (!empty) return false;
+
+            // ¿Estamos en el primer nodo del documento?
+            if ($from.index(0) !== 0) return false;
+
+            // ¿El cursor está al mero principio del texto?
+            if ($from.parentOffset !== 0) return false;
+
+            // ¿Es un H1?
+            const node = $from.parent;
+            if (node.type.name === 'heading' && node.attrs.level === 1) {
+              // Bloqueamos la acción. El usuario presiona Backspace pero no pasa nada.
+              // El H1 se mantiene intacto.
+              return true;
+            }
+
+            return false;
+          },
+        }),
+      ]);
+    });
+
+    crepeInstance.on((api) => {
+      api.updated((ctx) => {
+        // 1. Obtenemos la vista técnica del editor
+        const view = ctx.get(editorViewCtx);
+        const { state } = view;
+        const firstChild = state.doc.firstChild;
+
+        // Seguridad: Si el documento está vacío, no hacemos nada
+        if (!firstChild) return;
+
+        // 2. Verificamos: ¿Es el primer bloque un Título H1?
+        const esTituloH1 =
+          firstChild.type.name === 'heading' && firstChild.attrs.level === 1;
+
+        // 3. Si NO es H1 (porque el usuario borró el #), lo arreglamos
+        if (!esTituloH1) {
+          // Ejecutamos una transacción para cambiar el tipo de nodo a Heading H1
+          // manteniendo el texto que tenga escrito.
+          const tr = state.tr.setNodeMarkup(0, state.schema.nodes.heading, {
+            level: 1,
+          });
+
+          // Aplicamos el cambio inmediatamente
+          view.dispatch(tr);
+        }
+
+        if (esTituloH1) {
+          // Obtenemos el texto puro del nodo H1. Si está vacío, ponemos placeholder.
+          const textoTitulo = firstChild.textContent.trim() || 'Sin título';
+          setCurrentTitle(textoTitulo);
+        }
+
+        console.log('Editor updated (checked title)');
+      });
+    });
+
+    await crepeInstance.create();
+    editorInstance.set(crepeInstance);
+  }
+
+  initEditor();
+
+  document.addEventListener('astro:before-swap', () => {
+    if (crepeInstance) {
+      console.log('Limpiando editor de memoria...');
+      crepeInstance.destroy();
+      crepeInstance = null;
+      editorInstance.set(undefined);
+    }
+
+    disposeEmbeddingsClient();
   });
 </script>

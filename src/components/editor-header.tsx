@@ -1,118 +1,127 @@
-import { Ban, FileText, FolderUp, Plus } from 'lucide-react';
-import { motion, type Variants, type Transition } from 'motion/react';
+import {
+  FileJson,
+  FilePlus,
+  FileText,
+  FolderUp,
+  HomeIcon,
+  Menu,
+} from 'lucide-react';
+import { useStore } from '@nanostores/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { $modelStatus, $saveStatus } from '@/store/editor-store';
 import { BtnSaveDoc } from './btn-save-doc';
 import { useEditorActions } from './editor-actions';
-
-const BUTTON_MOTION_CONFIG = {
-  initial: 'rest',
-  whileHover: 'hover',
-  whileTap: 'tap',
-  variants: {
-    rest: { maxWidth: 40 },
-    hover: {
-      maxWidth: 140,
-      transition: { type: 'spring', stiffness: 200, damping: 35, delay: 0.15 },
-    },
-    tap: { scale: 0.95 },
-  },
-  transition: { type: 'spring', stiffness: 250, damping: 25 },
-} as const;
-
-const LABEL_VARIANTS: Variants = {
-  rest: { opacity: 0, x: 4 },
-  hover: { opacity: 1, x: 0, visibility: 'visible' },
-  tap: { opacity: 1, x: 0, visibility: 'visible' },
-};
-
-const LABEL_TRANSITION: Transition = {
-  type: 'spring',
-  stiffness: 200,
-  damping: 25,
-};
+import { Button } from './ui/button';
+import { DocumentInfo } from './document-info';
+import {
+  Menubar,
+  MenubarContent,
+  MenubarItem,
+  MenubarMenu,
+  MenubarSeparator,
+  MenubarShortcut,
+  MenubarTrigger,
+} from '@/components/ui/menubar';
+import { cn } from '@/lib/utils';
 
 function ManagementBar() {
   const { newDoc, importMarkdown, exportMarkdown, exportPdf } =
     useEditorActions();
 
+  const modelStatus = useStore($modelStatus);
+  const saveStatus = useStore($saveStatus);
+
+  const isBusy =
+    modelStatus.phase === 'loading' || saveStatus.phase === 'saving';
+
   return (
-    <div className='@container/wrapper w-full flex justify-end sticky top-0 z-20 py-4 px-3'>
-      <div className='flex w-fit flex-col @xl/wrapper:flex-row items-center gap-y-2 rounded-2xl border border-border p-2 shadow-lg backdrop-blur-sm bg-card/80 @xl/wrapper:space-x-3'>
-        <div className='mx-auto flex flex-col @lg/wrapper:flex-row shrink-0 items-center'>
-          <div className='mx-3 h-6 w-px rounded-full hidden @lg/wrapper:block' />
-
-          <motion.div
-            layout
-            layoutRoot
-            className='mx-auto flex flex-wrap space-x-2 sm:flex-nowrap'
-          >
-            <motion.button
-              {...BUTTON_MOTION_CONFIG}
-              className='flex h-10 items-center space-x-2 overflow-hidden whitespace-nowrap rounded-lg bg-blue-200/60 dark:bg-blue-800/80 px-2.5 py-2 text-blue-700 dark:text-blue-200'
-              aria-label='Nuevo documento'
-              onClick={() => newDoc()}
+    <div className='w-full flex justify-center sticky top-4 z-20 pointer-events-none'>
+      <div className='relative overflow-hidden rounded-xl p-px pointer-events-auto shadow-sm w-full max-w-5xl'>
+        <AnimatePresence>
+          {isBusy && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, rotate: 360 }}
+              exit={{ opacity: 0 }}
+              transition={{
+                opacity: { duration: 0.5 },
+                rotate: {
+                  duration: 4,
+                  repeat: Infinity,
+                  ease: 'linear',
+                },
+              }}
+              className='absolute -inset-[150%] z-0'
+              style={{
+                background:
+                  'conic-gradient(from 0deg, transparent 40%, #06b6d4 80%, #a855f7 90%, #ec4899 100%)',
+              }}
+            />
+          )}
+        </AnimatePresence>
+        <div
+          className={cn(
+            'relative z-10 flex items-center justify-between w-full h-11 rounded-xl bg-background/95 backdrop-blur-xl px-3 transition-colors',
+            !isBusy && 'border border-border/40',
+          )}
+        >
+          <div className='flex items-center gap-2 z-20'>
+            <Button
+              asChild
+              variant='ghost'
+              size='icon-sm'
+              className='text-muted-foreground hover:text-foreground shrink-0'
             >
-              <Plus size={20} className='shrink-0' />
-              <motion.span
-                variants={LABEL_VARIANTS}
-                transition={LABEL_TRANSITION}
-                className='invisible text-sm'
-              >
-                Nuevo
-              </motion.span>
-            </motion.button>
+              <a href='/'>
+                <HomeIcon size={24} />
+              </a>
+            </Button>
 
-            <motion.button
-              {...BUTTON_MOTION_CONFIG}
-              className='flex h-10 items-center space-x-2 overflow-hidden whitespace-nowrap rounded-lg bg-neutral-200/60 dark:bg-neutral-600/80 px-2.5 py-2 text-neutral-600 dark:text-neutral-200'
-              aria-label='Exportar Markdown'
-              onClick={() => exportMarkdown()}
-            >
-              <Ban size={20} className='shrink-0' />
-              <motion.span
-                variants={LABEL_VARIANTS}
-                transition={LABEL_TRANSITION}
-                className='invisible text-sm'
-              >
-                Exportar MD
-              </motion.span>
-            </motion.button>
+            <div className='h-4 w-px bg-border/60 shrink-0' />
 
-            <motion.button
-              {...BUTTON_MOTION_CONFIG}
-              className='flex h-10 items-center space-x-2 overflow-hidden whitespace-nowrap rounded-lg bg-red-200/60 dark:bg-red-800/80 px-2.5 py-2 text-red-600 dark:text-red-300'
-              aria-label='Exportar PDF'
-              onClick={() => exportPdf()}
-            >
-              <FileText size={20} className='shrink-0' />
-              <motion.span
-                variants={LABEL_VARIANTS}
-                transition={LABEL_TRANSITION}
-                className='invisible text-sm'
-              >
-                Exportar PDF
-              </motion.span>
-            </motion.button>
+            <Menubar className='border-none shadow-none bg-transparent p-0 h-auto'>
+              <MenubarMenu>
+                <MenubarTrigger className='cursor-pointer font-medium text-sm px-2.5 py-1.5 h-8 data-[state=open]:bg-accent/50 rounded-md transition-colors'>
+                  <Menu className='w-4 h-4 sm:hidden' />
+                  <span className='hidden sm:inline'>Archivo</span>
+                </MenubarTrigger>
+                <MenubarContent align='start'>
+                  <MenubarItem onClick={() => newDoc()}>
+                    <FilePlus className='mr-2 h-4 w-4' /> Nuevo{' '}
+                    <MenubarShortcut>⌘N</MenubarShortcut>
+                  </MenubarItem>
+                  <MenubarSeparator />
+                  <MenubarItem onClick={() => importMarkdown()}>
+                    <FolderUp className='mr-2 h-4 w-4' /> Importar...
+                  </MenubarItem>
+                  <MenubarSeparator />
+                  <MenubarItem onClick={() => exportMarkdown()}>
+                    <FileJson className='mr-2 h-4 w-4' /> Exportar MD
+                  </MenubarItem>
+                  <MenubarItem onClick={() => exportPdf()}>
+                    <FileText className='mr-2 h-4 w-4' /> Exportar PDF
+                  </MenubarItem>
+                </MenubarContent>
+              </MenubarMenu>
+            </Menubar>
+          </div>
 
-            <motion.button
-              {...BUTTON_MOTION_CONFIG}
-              className='flex h-10 items-center space-x-2 overflow-hidden whitespace-nowrap rounded-lg bg-green-200/60 dark:bg-green-800/80 px-2.5 py-2 text-green-600 dark:text-green-300'
-              aria-label='Importar Markdown'
-              onClick={() => importMarkdown()}
-            >
-              <FolderUp size={20} className='shrink-0' />
-              <motion.span
-                variants={LABEL_VARIANTS}
-                transition={LABEL_TRANSITION}
-                className='invisible text-sm'
-              >
-                Importar
-              </motion.span>
-            </motion.button>
-          </motion.div>
+          {/* 2. GRUPO CENTRO (ABSOLUTO)
+              left-1/2 -translate-x-1/2: Esto garantiza el CENTRO MATEMÁTICO del contenedor padre.
+              Ignora completamente el ancho de los botones laterales.
+           */}
+          <div className='absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-full max-w-75 flex justify-center pointer-events-none'>
+            {/* pointer-events-none en el wrapper para que los clics pasen si el título es muy ancho pero transparente */}
+            <div className='pointer-events-auto'>
+              <DocumentInfo />
+            </div>
+          </div>
+
+          {/* 3. GRUPO DERECHA (Guardar) */}
+          <div className='flex items-center gap-2 z-20'>
+            <BtnSaveDoc />
+          </div>
         </div>
-
-        <div className='mx-3 hidden h-6 w-px bg-border @xl/wrapper:block rounded-full' />
-        <BtnSaveDoc />
       </div>
     </div>
   );

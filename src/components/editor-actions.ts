@@ -30,7 +30,7 @@ import {
 } from '@/scripts/ai-embeddings';
 
 const MODEL = {
-  modelId: 'Xenova/multilingual-e5-large',
+  modelId: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
   device: 'wasm' as const,
 };
 
@@ -336,10 +336,6 @@ export function useEditorActions() {
   const saveStatus = useStore($saveStatus);
   const embeddingProgress = useStore($embeddingProgress);
 
-  useEffect(() => {
-    void ensureModelReady().catch(() => undefined);
-  }, []);
-
   const handleSave = useCallback(async () => {
     await saveDocumentWithEmbeddings();
   }, []);
@@ -366,7 +362,7 @@ export function useEditorActions() {
     Boolean(embeddingProgress);
 
   const canSave =
-    modelStatus.phase === 'ready' && saveStatus.phase !== 'saving';
+    saveStatus.phase !== 'saving' && modelStatus.phase !== 'error';
 
   const saveLabel = useMemo(() => {
     if (!isBusy) return 'Guardar';

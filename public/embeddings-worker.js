@@ -149,7 +149,8 @@ self.addEventListener('message', async (event) => {
     }
 
     if (type === 'init') {
-      const modelId = payload?.modelId || 'Xenova/multilingual-e5-large';
+      const modelId =
+        payload?.modelId || 'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
       const device = payload?.device || 'wasm';
 
       postProgress(requestId, {
@@ -169,7 +170,7 @@ self.addEventListener('message', async (event) => {
       const modelId =
         payload?.modelId ||
         currentConfig.modelId ||
-        'Xenova/multilingual-e5-large';
+        'Xenova/paraphrase-multilingual-MiniLM-L12-v2';
       const device = payload?.device || currentConfig.device || 'wasm';
       const texts = payload?.texts;
 

@@ -13,9 +13,9 @@ import {
 } from 'drizzle-orm/pg-core';
 
 // IMPORTANT:
-// Xenova/multilingual-e5-large normalmente devuelve embeddings de 1024 dimensiones.
+// Xenova/paraphrase-multilingual-MiniLM-L12-v2 normalmente devuelve embeddings de 1024 dimensiones.
 // Si cambias el modelo, ajusta este valor y genera una nueva migración.
-export const EMBEDDING_DIMENSIONS = 1024;
+export const EMBEDDING_DIMENSIONS = 384;
 
 export const documents = pgTable(
   'documents',

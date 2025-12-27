@@ -24,6 +24,11 @@ export const $saveStatus = atom<SaveStatus>({ phase: 'idle' });
 export const $lastMarkdownSnapshot = atom<string>('');
 export const editorInstance = atom<Crepe | undefined>(undefined);
 export const readOnlyState = atom<boolean>(false);
+export const $currentTitle = atom<string>('Sin título');
+
+export function setCurrentTitle(title: string) {
+  $currentTitle.set(title);
+}
 
 export function setModelLoading(progress: EditorProgress) {
   $modelStatus.set({ phase: 'loading', progress });

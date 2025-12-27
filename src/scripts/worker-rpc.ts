@@ -25,15 +25,25 @@ function randomId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export async function createEmbeddingsWorker(
-  workerUrl = '/embeddings-worker.js',
-) {
+let workerInstance: Worker | null = null;
+
+export function getEmbeddingsWorker(workerUrl = '/embeddings-worker.js') {
+  if (workerInstance) return workerInstance;
+
   if (typeof Worker === 'undefined') {
     throw new Error('Web Workers no están soportados en este navegador.');
   }
 
   // Worker module para permitir imports ESM.
-  return new Worker(workerUrl, { type: 'module' });
+  workerInstance = new Worker(workerUrl, { type: 'module' });
+  return workerInstance;
+}
+
+export function terminateEmbeddingsWorker() {
+  if (workerInstance) {
+    workerInstance.terminate();
+    workerInstance = null;
+  }
 }
 
 export function createWorkerRpcClient(worker: Worker) {

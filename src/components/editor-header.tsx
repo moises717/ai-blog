@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FileJson,
   FilePlus,
@@ -26,8 +26,18 @@ import {
 import { cn } from '@/lib/utils';
 
 function ManagementBar() {
+  const [isScrolled, setIsScrolled] = useState(false);
   const { newDoc, importMarkdown, exportMarkdown, exportPdf } =
     useEditorActions();
+
+  // Detectar scroll para efecto glassmorphism
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const modelStatus = useStore($modelStatus);
   const saveStatus = useStore($saveStatus);
@@ -43,8 +53,14 @@ function ManagementBar() {
     modelStatus.phase === 'loading' || saveStatus.phase === 'saving';
 
   return (
-    <div className='w-full flex justify-center sticky top-4 z-20 pointer-events-none'>
-      <div className='relative overflow-hidden rounded-xl p-px pointer-events-auto shadow-sm w-full max-w-5xl'>
+    <div className={cn(
+      'w-full flex justify-center sticky z-20 pointer-events-none transition-all duration-300 ease-out',
+      isScrolled ? 'top-0' : 'top-4'
+    )}>
+      <div className={cn(
+        'relative overflow-hidden p-px pointer-events-auto shadow-sm w-full transition-all duration-300 ease-out',
+        isScrolled ? 'max-w-full rounded-none' : 'max-w-5xl rounded-xl'
+      )}>
         <AnimatePresence>
           {isBusy && (
             <motion.div
@@ -69,8 +85,11 @@ function ManagementBar() {
         </AnimatePresence>
         <div
           className={cn(
-            'relative z-10 flex items-center justify-between w-full h-11 rounded-xl bg-background/95 backdrop-blur-xl px-3 transition-colors',
+            'relative z-10 flex items-center justify-between w-full h-11 px-3 transition-all duration-300 ease-out',
             !isBusy && 'border border-border/40',
+            isScrolled
+              ? 'bg-background/60 backdrop-blur-2xl shadow-lg shadow-black/5 border-white/10 rounded-none'
+              : 'bg-background/95 backdrop-blur-xl rounded-xl',
           )}
         >
           <div className='flex items-center gap-2 z-20'>

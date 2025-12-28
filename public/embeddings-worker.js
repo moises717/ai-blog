@@ -1,18 +1,21 @@
-/* Web Worker: embeddings (Transformers.js)
-   Motivo: onnxruntime-web usa import() internamente; en ServiceWorkerGlobalScope se bloquea.
-   Este worker módulo permite cargar WASM y medir progreso de descarga.
+/* Web Worker: embeddings (Transformers.js v2.17.2 - Xenova)
+   Versión estable con soporte completo de progreso de descarga.
+   Se usa la versión 2.x que es la más robusta para fetch en workers.
 */
 
 import {
   pipeline,
   env,
-} from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/+esm';
+} from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
 
 let featureExtractionPipeline = null;
 let currentConfig = {
   modelId: null,
   device: null,
 };
+
+// Tracking de archivos siendo descargados para evitar duplicados
+const downloadTracker = new Map();
 
 function toPlainArray(vectorLike) {
   if (!vectorLike) return null;
@@ -39,6 +42,22 @@ function postResponse(requestId, ok, result, error) {
   });
 }
 
+// Función para calcular el progreso total de todas las descargas activas
+function calculateTotalProgress() {
+  if (downloadTracker.size === 0) return null;
+
+  let totalBytes = 0;
+  let loadedBytes = 0;
+
+  for (const [, info] of downloadTracker) {
+    totalBytes += info.total;
+    loadedBytes += info.loaded;
+  }
+
+  if (totalBytes === 0) return null;
+  return Math.min(99, Math.round((loadedBytes / totalBytes) * 100));
+}
+
 async function ensurePipeline({ modelId, device, reportProgress }) {
   if (
     featureExtractionPipeline &&
@@ -50,82 +69,154 @@ async function ensurePipeline({ modelId, device, reportProgress }) {
 
   const report = typeof reportProgress === 'function' ? reportProgress : null;
 
+  // Configuración para Xenova/transformers v2
   env.allowRemoteModels = true;
   env.useBrowserCache = true;
+  env.allowLocalModels = false;
 
-  // Wrap fetch para emitir progreso de descarga de assets del modelo
-  const baseFetch = env.fetch || fetch;
-  env.fetch = async (...args) => {
-    const res = await baseFetch(...args);
-    if (!report || !res?.body) return res;
+  // Limpiar tracker de descargas anteriores
+  downloadTracker.clear();
 
-    let url = '';
-    try {
-      const input = args[0];
-      url = typeof input === 'string' ? input : input?.url || '';
-    } catch {
-      // ignore
+  // Interceptar fetch ANTES de la descarga del modelo
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async function (input, init) {
+    const url = typeof input === 'string' ? input : input?.url || '';
+
+    // Solo trackear descargas de assets del modelo
+    const isModelAsset = /huggingface|hf\.co|jsdelivr|onnxruntime|\\.wasm($|\\?)|\\.onnx($|\\?)|\\.bin($|\\?)|\\.json($|\\?)/i.test(url);
+
+    if (!isModelAsset || !report) {
+      return originalFetch(input, init);
     }
 
-    // Evitar “ruido”: solo reportar descargas de assets típicos del modelo/runtime
-    const isModelAsset =
-      /huggingface|hf\.co|jsdelivr|onnxruntime|\.wasm(\?|$)|\.onnx(\?|$)/i.test(
-        url,
-      );
-    if (!isModelAsset) return res;
+    const response = await originalFetch(input, init);
 
-    const total = Number(res.headers?.get('content-length')) || 0;
-    if (!total || !Number.isFinite(total)) {
+    // Clonar headers porque vamos a crear un nuevo Response
+    const contentLength = response.headers.get('content-length');
+    const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+    if (!response.body || total === 0) {
+      // Sin content-length, solo reportar que está descargando
       report({ phase: 'loading', label: 'Descargando modelo', percent: null });
-      return res;
+      return response;
     }
 
-    let loaded = 0;
-    const reader = res.body.getReader();
-    const stream = new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read();
-        if (done) {
-          report({
-            phase: 'loading',
-            label: 'Modelo descargado',
-            percent: 100,
-          });
-          controller.close();
-          return;
-        }
+    // Usar URL como key única para este archivo
+    const fileKey = url.split('/').pop() || url;
+    downloadTracker.set(fileKey, { loaded: 0, total });
 
-        loaded += value?.byteLength || 0;
-        const pct = Math.min(99, Math.round((loaded / total) * 100));
-        report({ phase: 'loading', label: 'Descargando modelo', percent: pct });
-        controller.enqueue(value);
+    const reader = response.body.getReader();
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              // Marcar este archivo como completado
+              const info = downloadTracker.get(fileKey);
+              if (info) {
+                info.loaded = info.total;
+              }
+
+              const totalPct = calculateTotalProgress();
+              if (totalPct !== null) {
+                report({
+                  phase: 'loading',
+                  label: 'Descargando modelo',
+                  percent: totalPct
+                });
+              }
+
+              controller.close();
+              break;
+            }
+
+            // Actualizar progreso
+            const info = downloadTracker.get(fileKey);
+            if (info && value) {
+              info.loaded += value.byteLength;
+            }
+
+            const totalPct = calculateTotalProgress();
+            if (totalPct !== null) {
+              report({
+                phase: 'loading',
+                label: 'Descargando modelo',
+                percent: totalPct
+              });
+            }
+
+            controller.enqueue(value);
+          }
+        } catch (err) {
+          controller.error(err);
+        }
       },
       cancel(reason) {
-        try {
-          reader.cancel(reason);
-        } catch {
-          // ignore
-        }
-      },
+        reader.cancel(reason);
+        downloadTracker.delete(fileKey);
+      }
     });
 
     return new Response(stream, {
-      headers: res.headers,
-      status: res.status,
-      statusText: res.statusText,
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
     });
   };
 
+  // Mostrar estado inicial
+  if (report) {
+    report({ phase: 'loading', label: 'Iniciando descarga', percent: 0 });
+  }
+
   const resolvedDevice = device || 'wasm';
 
-  featureExtractionPipeline = await pipeline('feature-extraction', modelId, {
-    device: resolvedDevice,
-  });
+  try {
+    // En v2.x usamos las opciones de progreso nativas también
+    featureExtractionPipeline = await pipeline('feature-extraction', modelId, {
+      device: resolvedDevice,
+      progress_callback: (progressInfo) => {
+        // Callback nativo de transformers.js para progreso de descarga
+        if (report && progressInfo) {
+          const { status, progress, file } = progressInfo;
 
-  currentConfig = { modelId, device: resolvedDevice };
-  if (report) report({ phase: 'loading', label: 'Modelo listo', percent: 100 });
+          if (status === 'downloading' || status === 'progress') {
+            const pct = typeof progress === 'number' ? Math.round(progress) : null;
+            report({
+              phase: 'loading',
+              label: file ? `Descargando ${file}` : 'Descargando modelo',
+              percent: pct
+            });
+          } else if (status === 'done') {
+            report({
+              phase: 'loading',
+              label: 'Modelo listo',
+              percent: 100
+            });
+          }
+        }
+      }
+    });
 
-  return featureExtractionPipeline;
+    currentConfig = { modelId, device: resolvedDevice };
+
+    // Restaurar fetch original
+    globalThis.fetch = originalFetch;
+
+    if (report) {
+      report({ phase: 'loading', label: 'Modelo listo', percent: 100 });
+    }
+
+    return featureExtractionPipeline;
+  } catch (err) {
+    // Restaurar fetch en caso de error
+    globalThis.fetch = originalFetch;
+    throw err;
+  }
 }
 
 self.addEventListener('message', async (event) => {
@@ -144,6 +235,7 @@ self.addEventListener('message', async (event) => {
     if (type === 'clearCache') {
       featureExtractionPipeline = null;
       currentConfig = { modelId: null, device: null };
+      downloadTracker.clear();
       postResponse(requestId, true, { cleared: true });
       return;
     }
@@ -155,13 +247,16 @@ self.addEventListener('message', async (event) => {
 
       postProgress(requestId, {
         phase: 'loading',
-        message: 'Cargando modelo…',
+        label: 'Iniciando carga del modelo',
+        percent: 0,
       });
+
       await ensurePipeline({
         modelId,
         device,
         reportProgress: (p) => postProgress(requestId, p),
       });
+
       postResponse(requestId, true, { ready: true, config: currentConfig });
       return;
     }

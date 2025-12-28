@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import {
   FileJson,
   FilePlus,
@@ -10,7 +11,7 @@ import { useStore } from '@nanostores/react';
 import { motion, AnimatePresence } from 'motion/react';
 import { $modelStatus, $saveStatus } from '@/store/editor-store';
 import { BtnSaveDoc } from './btn-save-doc';
-import { useEditorActions } from './editor-actions';
+import { useEditorActions, ensureModelReady } from './editor-actions';
 import { Button } from './ui/button';
 import { DocumentInfo } from './document-info';
 import {
@@ -30,6 +31,13 @@ function ManagementBar() {
 
   const modelStatus = useStore($modelStatus);
   const saveStatus = useStore($saveStatus);
+
+  // Iniciar la descarga del modelo cuando se monta el componente
+  useEffect(() => {
+    ensureModelReady().catch((err) => {
+      console.warn('Error al iniciar descarga del modelo:', err);
+    });
+  }, []);
 
   const isBusy =
     modelStatus.phase === 'loading' || saveStatus.phase === 'saving';

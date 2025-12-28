@@ -81,7 +81,7 @@ function clearCurrentDoc() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-async function ensureModelReady() {
+export async function ensureModelReady() {
   if (modelInitPromise) return modelInitPromise;
   modelInitPromise = (async () => {
     try {

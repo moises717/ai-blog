@@ -1,132 +1,116 @@
+/**
+ * Document Actions - Astro Server Actions for document management.
+ * 
+ * Este módulo define las acciones del servidor para gestionar documentos y sus embeddings.
+ * La lógica de base de datos está delegada a los repositorios en src/db/.
+ */
+
 import { defineAction, ActionError } from 'astro:actions';
 import { z } from 'astro/zod';
-import { eq, sql } from 'drizzle-orm';
 
-import { getDb } from '../db/client';
+// Repositories
 import {
-  documentEmbeddings,
-  documents,
+  getDocumentBySlug,
+  listDocuments,
+  createDocument,
+  updateDocument,
+  documentExists,
+  type DocumentRow,
+} from '../db/documents';
+import {
+  upsertEmbeddings,
+  validateEmbeddingDimensions,
   EMBEDDING_DIMENSIONS,
-} from '../db/schema';
+} from '../db/embeddings';
 import { semanticSearch } from '../db/semantic-search';
+import { pickDbError } from '../db/utils';
+import { extractExcerpt } from '../lib/embedding-utils';
 
-function pickDbError(err: unknown): {
-  code?: string;
-  message?: string;
-  detail?: string;
-  constraint?: string;
-} {
-  const anyErr = err as any;
-  const cause = anyErr?.cause;
+// ============================================================================
+// Schemas (Zod validation)
+// ============================================================================
+
+const saveInputSchema = z.object({
+  id: z.string().uuid().optional(),
+  slug: z.string().min(1).optional(),
+  title: z.string().min(1),
+  rawMarkdown: z.string(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const embeddingItemSchema = z.object({
+  chunkIndex: z.number().int().min(0),
+  chunkText: z.string().min(1),
+  embedding: z.array(z.number()),
+  modelId: z.string().min(1),
+  device: z.string().min(1),
+  pooling: z.string().optional(),
+  normalize: z.boolean().optional(),
+});
+
+const upsertEmbeddingsSchema = z.object({
+  documentId: z.string().uuid(),
+  items: z.array(embeddingItemSchema).min(1).max(32),
+});
+
+const listInputSchema = z.object({
+  limit: z.number().int().min(1).max(100).default(20),
+  offset: z.number().int().min(0).default(0),
+  search: z.string().optional(),
+});
+
+const getBySlugSchema = z.object({
+  slug: z.string().min(1),
+});
+
+const semanticSearchSchema = z.object({
+  queryEmbedding: z.array(z.number()),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function toDocumentWithExcerpt(doc: DocumentRow) {
   return {
-    code: cause?.code ?? anyErr?.code,
-    message: cause?.message ?? anyErr?.message,
-    detail: cause?.detail,
-    constraint: cause?.constraint,
+    ...doc,
+    excerpt: extractExcerpt(doc.rawMarkdown, 160),
   };
 }
 
-function fnv1a32(str: string) {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function slugify(input: string) {
-  const base = input
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
-    .slice(0, 80);
-
-  return base || 'post';
-}
-
-function makeSlug(title: string) {
-  const suffix = Math.random().toString(16).slice(2, 8);
-  return `${slugify(title)}-${suffix}`;
-}
+// ============================================================================
+// Actions
+// ============================================================================
 
 export const documentsActions = {
+  /**
+   * Guarda un documento (crea nuevo o actualiza existente).
+   */
   save: defineAction({
-    input: z.object({
-      id: z.string().uuid().optional(),
-      slug: z.string().min(1).optional(),
-      title: z.string().min(1),
-      rawMarkdown: z.string(),
-      metadata: z.record(z.unknown()).optional(),
-    }),
+    input: saveInputSchema,
     handler: async ({ id, slug, title, rawMarkdown, metadata }) => {
-      const db = getDb();
+      // Update existing document
       if (id) {
-        try {
-          const updated = await db
-            .update(documents)
-            .set({
-              title,
-              rawMarkdown,
-              metadata: metadata ?? {},
-            })
-            .where(eq(documents.id, id))
-            .returning({
-              id: documents.id,
-              slug: documents.slug,
-              title: documents.title,
-            });
-
-          const row = updated[0];
-          if (!row) {
-            throw new ActionError({
-              code: 'NOT_FOUND',
-              message: 'Documento no encontrado.',
-            });
-          }
-
-          return row;
-        } catch (err) {
-          console.error('documents.save (update) failed', err);
-          const dbErr = pickDbError(err);
+        const updated = await updateDocument(id, { title, rawMarkdown, metadata });
+        
+        if (!updated) {
           throw new ActionError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message:
-              process.env.NODE_ENV === 'production'
-                ? 'Error guardando el documento.'
-                : `Error guardando el documento (update). ${dbErr.code ?? ''} ${
-                    dbErr.message ?? ''
-                  }`.trim(),
+            code: 'NOT_FOUND',
+            message: 'Documento no encontrado.',
           });
         }
+        
+        return updated;
       }
 
-      const finalSlug = slug ?? makeSlug(title);
-
-      // Insert con fallback simple por colisión de slug.
-      // (Si quieres idempotencia fuerte por slug, podemos cambiar a upsert.)
+      // Create new document
       try {
-        const inserted = await db
-          .insert(documents)
-          .values({
-            title,
-            slug: finalSlug,
-            rawMarkdown,
-            metadata: metadata ?? {},
-          })
-          .returning({
-            id: documents.id,
-            slug: documents.slug,
-            title: documents.title,
-          });
-
-        return inserted[0]!;
-      } catch (err: any) {
+        return await createDocument({ slug, title, rawMarkdown, metadata });
+      } catch (err) {
         const dbErr = pickDbError(err);
 
-        // 23505 = unique_violation
+        // Handle unique violation (slug already exists)
         if (dbErr.code === '23505') {
           throw new ActionError({
             code: 'CONFLICT',
@@ -134,199 +118,90 @@ export const documentsActions = {
           });
         }
 
-        // 42883 = undefined_function (típico si falta pgcrypto => gen_random_uuid())
-        if (
-          dbErr.code === '42883' &&
-          (dbErr.message ?? '').includes('gen_random_uuid')
-        ) {
+        // Handle missing pgcrypto extension
+        if (dbErr.code === '42883' && dbErr.message?.includes('gen_random_uuid')) {
           throw new ActionError({
             code: 'INTERNAL_SERVER_ERROR',
-            message:
-              'La BD no tiene habilitada la extensión pgcrypto (gen_random_uuid). Ejecuta `pnpm db:migrate` y asegúrate de que la migración 0001_enable_extensions se aplique en la misma DATABASE_URL que usa Astro.',
+            message: 'La BD no tiene habilitada la extensión pgcrypto. Ejecuta `pnpm db:migrate`.',
           });
         }
 
-        console.error('documents.save (insert) failed', err);
-        if (process.env.NODE_ENV !== 'production') {
-          throw new ActionError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: `Error guardando el documento (insert). ${
-              dbErr.code ?? ''
-            } ${dbErr.message ?? ''}`.trim(),
-          });
-        }
-        throw err;
+        console.error('documents.save failed', err);
+        throw new ActionError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Error guardando el documento.',
+        });
       }
     },
   }),
 
+  /**
+   * Inserta o actualiza embeddings para un documento.
+   */
   upsertEmbeddings: defineAction({
-    input: z.object({
-      documentId: z.string().uuid(),
-      items: z
-        .array(
-          z.object({
-            chunkIndex: z.number().int().min(0),
-            chunkText: z.string().min(1),
-            embedding: z.array(z.number()),
-            modelId: z.string().min(1),
-            device: z.string().min(1),
-            pooling: z.string().optional(),
-            normalize: z.boolean().optional(),
-          }),
-        )
-        .min(1)
-        .max(32),
-    }),
+    input: upsertEmbeddingsSchema,
     handler: async ({ documentId, items }) => {
-      const db = getDb();
-      // Verificar existencia del documento (mejor error que FK genérico)
-      const doc = await db
-        .select({ id: documents.id })
-        .from(documents)
-        .where(eq(documents.id, documentId))
-        .limit(1);
-
-      if (!doc[0]) {
+      // Verify document exists
+      const exists = await documentExists(documentId);
+      if (!exists) {
         throw new ActionError({
           code: 'NOT_FOUND',
           message: 'Documento no encontrado para embeddings.',
         });
       }
 
-      for (const it of items) {
-        if (it.embedding.length !== EMBEDDING_DIMENSIONS) {
+      // Validate embedding dimensions
+      for (const item of items) {
+        if (!validateEmbeddingDimensions(item.embedding)) {
           throw new ActionError({
             code: 'BAD_REQUEST',
-            message: `Dimensión inválida del embedding. Esperado ${EMBEDDING_DIMENSIONS}, recibido ${it.embedding.length}.`,
+            message: `Dimensión inválida del embedding. Esperado ${EMBEDDING_DIMENSIONS}, recibido ${item.embedding.length}.`,
           });
         }
       }
 
-      const values = items.map((it) => {
-        const contentHash = fnv1a32(it.chunkText);
-        return {
-          documentId,
-          chunkIndex: it.chunkIndex,
-          chunkText: it.chunkText,
-          modelId: it.modelId,
-          device: it.device,
-          pooling: it.pooling ?? 'mean',
-          normalize: it.normalize ?? true ? 1 : 0,
-          contentHash,
-          embedding: it.embedding,
-        };
-      });
-
-      // Upsert por doc+chunk+modelo+device
-      await db
-        .insert(documentEmbeddings)
-        .values(values)
-        .onConflictDoUpdate({
-          target: [
-            documentEmbeddings.documentId,
-            documentEmbeddings.chunkIndex,
-            documentEmbeddings.modelId,
-            documentEmbeddings.device,
-          ],
-          set: {
-            chunkText: sql`excluded.chunk_text`,
-            pooling: sql`excluded.pooling`,
-            normalize: sql`excluded.normalize`,
-            contentHash: sql`excluded.content_hash`,
-            embedding: sql`excluded.embedding`,
-          },
-        });
-
-      return { upserted: values.length };
+      const count = await upsertEmbeddings({ documentId, items });
+      return { upserted: count };
     },
   }),
 
+  /**
+   * Lista documentos con paginación y búsqueda opcional.
+   */
   list: defineAction({
-    input: z.object({
-      limit: z.number().int().min(1).max(100).default(20),
-      offset: z.number().int().min(0).default(0),
-      search: z.string().optional(),
-    }),
+    input: listInputSchema,
     handler: async ({ limit, offset, search }) => {
-      const db = getDb();
-
-      let query = db
-        .select({
-          id: documents.id,
-          title: documents.title,
-          slug: documents.slug,
-          rawMarkdown: documents.rawMarkdown,
-          metadata: documents.metadata,
-          createdAt: documents.createdAt,
-          updatedAt: documents.updatedAt,
-        })
-        .from(documents)
-        .orderBy(sql`${documents.createdAt} DESC`)
-        .limit(limit)
-        .offset(offset);
-
-      if (search && search.trim()) {
-        const searchTerm = `%${search.trim().toLowerCase()}%`;
-        query = query.where(
-          sql`LOWER(${documents.title}) LIKE ${searchTerm}`,
-        ) as typeof query;
-      }
-
-      const rows = await query;
-
-      // Extract excerpt from rawMarkdown (first 160 chars)
-      return rows.map((row) => ({
-        ...row,
-        excerpt: row.rawMarkdown
-          .replace(/^#.*$/gm, '')
-          .replace(/[#*_`]/g, '')
-          .trim()
-          .slice(0, 160) + (row.rawMarkdown.length > 160 ? '...' : ''),
-      }));
+      const docs = await listDocuments({ limit, offset, search });
+      return docs.map(toDocumentWithExcerpt);
     },
   }),
 
+  /**
+   * Obtiene un documento por su slug.
+   */
   getBySlug: defineAction({
-    input: z.object({
-      slug: z.string().min(1),
-    }),
+    input: getBySlugSchema,
     handler: async ({ slug }) => {
-      const db = getDb();
-
-      const rows = await db
-        .select({
-          id: documents.id,
-          title: documents.title,
-          slug: documents.slug,
-          rawMarkdown: documents.rawMarkdown,
-          metadata: documents.metadata,
-          createdAt: documents.createdAt,
-          updatedAt: documents.updatedAt,
-        })
-        .from(documents)
-        .where(eq(documents.slug, slug))
-        .limit(1);
-
-      const row = rows[0];
-      if (!row) {
+      const doc = await getDocumentBySlug(slug);
+      
+      if (!doc) {
         throw new ActionError({
           code: 'NOT_FOUND',
           message: 'Documento no encontrado.',
         });
       }
 
-      return row;
+      return doc;
     },
   }),
 
+  /**
+   * Realiza búsqueda semántica usando embeddings.
+   */
   semanticSearch: defineAction({
-    input: z.object({
-      queryEmbedding: z.array(z.number()),
-      limit: z.number().int().min(1).max(50).default(10),
-    }),
+    input: semanticSearchSchema,
     handler: async ({ queryEmbedding, limit }) => {
-      if (queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
+      if (!validateEmbeddingDimensions(queryEmbedding)) {
         throw new ActionError({
           code: 'BAD_REQUEST',
           message: `Dimensión inválida del embedding. Esperado ${EMBEDDING_DIMENSIONS}, recibido ${queryEmbedding.length}.`,
@@ -334,8 +209,7 @@ export const documentsActions = {
       }
 
       try {
-        const results = await semanticSearch(queryEmbedding, limit);
-        return results;
+        return await semanticSearch(queryEmbedding, limit);
       } catch (err) {
         console.error('semanticSearch failed', err);
         throw new ActionError({

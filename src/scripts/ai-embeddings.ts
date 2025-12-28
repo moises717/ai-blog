@@ -145,6 +145,49 @@ export async function embedPost(args: EmbedPostArgs): Promise<number[]> {
   return embedding;
 }
 
+export type EmbedQueryArgs = {
+  query: string;
+  model?: Partial<EmbeddingModelConfig>;
+  onProgress?: (p: unknown) => void;
+};
+
+/**
+ * Genera embedding para una query de búsqueda.
+ * Usa el prefijo 'query:' requerido por el modelo E5.
+ * No se cachea en IndexedDB ya que las queries son efímeras.
+ */
+export async function embedQuery(args: EmbedQueryArgs): Promise<number[]> {
+  const cfg: EmbeddingModelConfig = {
+    modelId: args.model?.modelId ?? DEFAULT_MODEL.modelId,
+    device: args.model?.device ?? DEFAULT_MODEL.device,
+  };
+
+  await ensureModelInitialized(cfg, args.onProgress);
+
+  // El modelo E5 requiere prefijo 'query:' para queries de búsqueda
+  const text = args.query.startsWith('query:')
+    ? args.query
+    : `query: ${args.query}`;
+
+  const res = (await rpc!.call(
+    'embed',
+    {
+      modelId: cfg.modelId,
+      device: cfg.device,
+      texts: [text],
+    },
+    {
+      timeoutMs: 10 * 60_000,
+      onProgress: args.onProgress,
+    },
+  )) as any;
+
+  const embedding = (res?.embeddings?.[0] ?? null) as number[] | null;
+  if (!embedding) throw new Error('No se pudo generar embedding para la query.');
+
+  return embedding;
+}
+
 type DebounceUnsubscribe = () => void;
 
 export function subscribeDebouncedEmbeddings(opts: {

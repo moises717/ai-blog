@@ -8,6 +8,7 @@ import {
   documents,
   EMBEDDING_DIMENSIONS,
 } from '../db/schema';
+import { semanticSearch } from '../db/semantic-search';
 
 function pickDbError(err: unknown): {
   code?: string;
@@ -316,6 +317,32 @@ export const documentsActions = {
       }
 
       return row;
+    },
+  }),
+
+  semanticSearch: defineAction({
+    input: z.object({
+      queryEmbedding: z.array(z.number()),
+      limit: z.number().int().min(1).max(50).default(10),
+    }),
+    handler: async ({ queryEmbedding, limit }) => {
+      if (queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
+        throw new ActionError({
+          code: 'BAD_REQUEST',
+          message: `Dimensión inválida del embedding. Esperado ${EMBEDDING_DIMENSIONS}, recibido ${queryEmbedding.length}.`,
+        });
+      }
+
+      try {
+        const results = await semanticSearch(queryEmbedding, limit);
+        return results;
+      } catch (err) {
+        console.error('semanticSearch failed', err);
+        throw new ActionError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Error realizando búsqueda semántica.',
+        });
+      }
     },
   }),
 };

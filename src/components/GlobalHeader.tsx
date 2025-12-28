@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Search, HomeIcon, X } from 'lucide-react';
+import { Search, HomeIcon, X, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ModeToggle } from './ui/mode-toggle';
 import { Button } from './ui/button';
@@ -9,6 +9,8 @@ interface GlobalHeaderProps {
     showSearch?: boolean;
     showHome?: boolean;
     isLoading?: boolean;
+    isSearching?: boolean;
+    initialQuery?: string;
     className?: string;
 }
 
@@ -16,12 +18,27 @@ function GlobalHeader({
     showSearch = true,
     showHome = true,
     isLoading = false,
+    isSearching = false,
+    initialQuery = '',
     className
 }: GlobalHeaderProps) {
     const [isScrolled, setIsScrolled] = useState(false);
-    const [searchValue, setSearchValue] = useState('');
+    const [searchValue, setSearchValue] = useState(initialQuery);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [localSearching, setLocalSearching] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const desktopInputRef = useRef<HTMLInputElement>(null);
+
+    // Listen for search state changes from SearchResults component
+    useEffect(() => {
+        const handleSearchState = (e: CustomEvent<boolean>) => {
+            setLocalSearching(e.detail);
+        };
+        window.addEventListener('search:state' as any, handleSearchState);
+        return () => window.removeEventListener('search:state' as any, handleSearchState);
+    }, []);
+
+    const isBusy = isLoading || isSearching || localSearching;
 
     useEffect(() => {
         const handleScroll = () => {
@@ -45,16 +62,17 @@ function GlobalHeader({
     const handleSearchSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (searchValue.trim()) {
-            // Dispatch custom event for search
-            window.dispatchEvent(
-                new CustomEvent('blog:search', { detail: searchValue.trim() })
-            );
+            // Redirect to search page with query
+            window.location.href = `/search?q=${encodeURIComponent(searchValue.trim())}`;
         }
     };
 
     const handleSearchClear = () => {
         setSearchValue('');
-        window.dispatchEvent(new CustomEvent('blog:search', { detail: '' }));
+        // If on search page, redirect to home
+        if (window.location.pathname === '/search') {
+            window.location.href = '/';
+        }
     };
 
     return (
@@ -71,32 +89,10 @@ function GlobalHeader({
                     isScrolled ? 'max-w-full rounded-none' : 'max-w-5xl rounded-xl',
                 )}
             >
-                <AnimatePresence>
-                    {isLoading && (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1, rotate: 360 }}
-                            exit={{ opacity: 0 }}
-                            transition={{
-                                opacity: { duration: 0.5 },
-                                rotate: {
-                                    duration: 4,
-                                    repeat: Infinity,
-                                    ease: 'linear',
-                                },
-                            }}
-                            className="absolute -inset-[150%] z-0"
-                            style={{
-                                background:
-                                    'conic-gradient(from 0deg, transparent 40%, #06b6d4 80%, #a855f7 90%, #ec4899 100%)',
-                            }}
-                        />
-                    )}
-                </AnimatePresence>
                 <div
                     className={cn(
                         'relative z-10 flex items-center justify-between w-full h-12 px-4 transition-all duration-300 ease-out',
-                        !isLoading && 'border border-border/40',
+                        'border border-border/40',
                         isScrolled
                             ? 'bg-background/60 backdrop-blur-2xl shadow-lg shadow-black/5 dark:shadow-black/20 rounded-none'
                             : 'bg-background/95 backdrop-blur-xl rounded-xl',
@@ -125,34 +121,72 @@ function GlobalHeader({
                             onSubmit={handleSearchSubmit}
                             className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-full max-w-sm px-4 hidden sm:block"
                         >
-                            <div className="relative">
-                                <Search
-                                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70"
-                                    size={15}
-                                />
-                                <input
-                                    type="text"
-                                    value={searchValue}
-                                    onChange={handleSearchChange}
-                                    placeholder="Buscar..."
-                                    className={cn(
-                                        'w-full h-8 pl-9 pr-8 rounded-lg',
-                                        'bg-muted/40 border border-transparent',
-                                        'text-sm text-foreground placeholder:text-muted-foreground/60',
-                                        'focus:outline-none focus:ring-1 focus:ring-ring/40 focus:bg-muted/60',
-                                        'transition-all duration-200',
-                                        'hover:bg-muted/50',
+                            {/* Search input with animated border */}
+                            <div className="relative rounded-lg p-px overflow-hidden">
+                                {/* Animated border when searching */}
+                                <AnimatePresence>
+                                    {localSearching && (
+                                        <motion.div
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1, rotate: 360 }}
+                                            exit={{ opacity: 0 }}
+                                            transition={{
+                                                opacity: { duration: 0.3 },
+                                                rotate: {
+                                                    duration: 2,
+                                                    repeat: Infinity,
+                                                    ease: 'linear',
+                                                },
+                                            }}
+                                            className="absolute -inset-[100px] z-0 pointer-events-none"
+                                            style={{
+                                                background:
+                                                    'conic-gradient(from 0deg, transparent 30%, #06b6d4 60%, #a855f7 80%, #ec4899 100%)',
+                                            }}
+                                        />
                                     )}
-                                />
-                                {searchValue && (
-                                    <button
-                                        type="button"
-                                        onClick={handleSearchClear}
-                                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground transition-colors"
-                                    >
-                                        <X size={14} />
-                                    </button>
-                                )}
+                                </AnimatePresence>
+                                {/* Inner container with solid background to mask the gradient */}
+                                <div className={cn(
+                                    'relative z-10 flex items-center rounded-lg',
+                                    localSearching ? 'bg-background' : 'bg-muted/40',
+                                    'transition-all duration-200',
+                                    !localSearching && 'hover:bg-muted/50',
+                                )}>
+                                    {localSearching ? (
+                                        <Sparkles
+                                            className="absolute left-3 top-1/2 -translate-y-1/2 text-primary animate-pulse"
+                                            size={15}
+                                        />
+                                    ) : (
+                                        <Search
+                                            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70"
+                                            size={15}
+                                        />
+                                    )}
+                                    <input
+                                        ref={desktopInputRef}
+                                        type="text"
+                                        value={searchValue}
+                                        onChange={handleSearchChange}
+                                        placeholder="Búsqueda semántica..."
+                                        className={cn(
+                                            'w-full h-8 pl-9 pr-8 rounded-lg bg-transparent',
+                                            'text-sm text-foreground placeholder:text-muted-foreground/60',
+                                            'focus:outline-none focus:ring-1 focus:ring-ring/40',
+                                            'transition-all duration-200',
+                                        )}
+                                    />
+                                    {searchValue && (
+                                        <button
+                                            type="button"
+                                            onClick={handleSearchClear}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground transition-colors"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </form>
                     )}
@@ -186,34 +220,71 @@ function GlobalHeader({
                         className="fixed inset-0 z-50 bg-background/95 backdrop-blur-xl sm:hidden"
                     >
                         <div className="p-4">
-                            <form onSubmit={handleSearchSubmit} className="relative">
-                                <Search
-                                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                                    size={18}
-                                />
-                                <input
-                                    ref={searchInputRef}
-                                    type="text"
-                                    value={searchValue}
-                                    onChange={handleSearchChange}
-                                    placeholder="Buscar posts..."
-                                    className={cn(
-                                        'w-full h-12 pl-10 pr-12 rounded-xl',
-                                        'bg-muted/50 border border-border/50',
-                                        'text-base text-foreground placeholder:text-muted-foreground',
-                                        'focus:outline-none focus:ring-2 focus:ring-ring/50',
-                                    )}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setIsSearchOpen(false);
-                                        handleSearchClear();
-                                    }}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                    <X size={20} />
-                                </button>
+                            <form onSubmit={handleSearchSubmit}>
+                                {/* Mobile search input with animated border */}
+                                <div className="relative overflow-hidden rounded-xl p-px">
+                                    <AnimatePresence>
+                                        {localSearching && (
+                                            <motion.div
+                                                initial={{ opacity: 0 }}
+                                                animate={{ opacity: 1, rotate: 360 }}
+                                                exit={{ opacity: 0 }}
+                                                transition={{
+                                                    opacity: { duration: 0.3 },
+                                                    rotate: {
+                                                        duration: 2,
+                                                        repeat: Infinity,
+                                                        ease: 'linear',
+                                                    },
+                                                }}
+                                                className="absolute -inset-[200%] z-0"
+                                                style={{
+                                                    background:
+                                                        'conic-gradient(from 0deg, transparent 30%, #06b6d4 60%, #a855f7 80%, #ec4899 100%)',
+                                                }}
+                                            />
+                                        )}
+                                    </AnimatePresence>
+                                    <div className={cn(
+                                        'relative z-10 flex items-center',
+                                        localSearching ? 'bg-background' : 'bg-muted/50',
+                                        'border border-border/50 rounded-xl',
+                                    )}>
+                                        {localSearching ? (
+                                            <Sparkles
+                                                className="absolute left-3 top-1/2 -translate-y-1/2 text-primary animate-pulse"
+                                                size={18}
+                                            />
+                                        ) : (
+                                            <Search
+                                                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                                                size={18}
+                                            />
+                                        )}
+                                        <input
+                                            ref={searchInputRef}
+                                            type="text"
+                                            value={searchValue}
+                                            onChange={handleSearchChange}
+                                            placeholder="Búsqueda semántica..."
+                                            className={cn(
+                                                'w-full h-12 pl-10 pr-12 rounded-xl bg-transparent',
+                                                'text-base text-foreground placeholder:text-muted-foreground',
+                                                'focus:outline-none focus:ring-2 focus:ring-ring/50',
+                                            )}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setIsSearchOpen(false);
+                                                handleSearchClear();
+                                            }}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground transition-colors"
+                                        >
+                                            <X size={20} />
+                                        </button>
+                                    </div>
+                                </div>
                             </form>
                         </div>
                     </motion.div>

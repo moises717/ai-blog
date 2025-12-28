@@ -43,9 +43,24 @@ function normalizeProgressPayload(payload: unknown): EditorProgress {
   const anyPayload = payload as any;
   const phase = anyPayload.phase || '';
   const message = anyPayload.label || anyPayload.message;
+  const fromCache = anyPayload.fromCache === true;
   const pct = Number.isFinite(anyPayload.percent)
     ? Math.round(anyPayload.percent)
     : null;
+
+  // Si el modelo ya está en caché/memoria, mostrar mensaje apropiado
+  if (phase === 'cached' || phase === 'ready') {
+    if (fromCache) {
+      return {
+        label: 'Generando vectores',
+        percent: null,
+      };
+    }
+    return {
+      label: 'Modelo listo',
+      percent: 100,
+    };
+  }
 
   if (
     phase === 'running' &&
@@ -67,8 +82,17 @@ function normalizeProgressPayload(payload: unknown): EditorProgress {
     };
   }
 
+  // Solo mostrar "Descargando modelo" si realmente está descargando (no desde caché)
+  if (phase === 'loading' && !fromCache) {
+    return {
+      label: message || 'Descargando modelo',
+      percent: pct,
+    };
+  }
+
+  // Default para otros casos
   return {
-    label: message || 'Descargando modelo',
+    label: message || 'Preparando',
     percent: pct,
   };
 }

@@ -65,14 +65,22 @@ async function ensurePipeline({ modelId, device, reportProgress }) {
     currentConfig.modelId === modelId &&
     currentConfig.device === resolvedDevice
   ) {
+    // Modelo ya está en memoria - notificar que está listo
+    if (reportProgress) {
+      reportProgress({ phase: 'cached', label: 'Modelo en memoria', percent: 100, fromCache: true });
+    }
     return featureExtractionPipeline;
   }
 
   const report = typeof reportProgress === 'function' ? reportProgress : null;
 
-  // Mostrar estado inicial
+  // Trackear si hubo eventos de descarga real (no caché)
+  let hadDownloadProgress = false;
+  const startTime = Date.now();
+
+  // Mostrar estado inicial neutro
   if (report) {
-    report({ phase: 'loading', label: 'Iniciando descarga', percent: 0 });
+    report({ phase: 'loading', label: 'Preparando modelo', percent: 0, fromCache: false });
   }
 
   console.log(`[Worker] Iniciando pipeline: model=${modelId}, device=${resolvedDevice}`);
@@ -89,24 +97,28 @@ async function ensurePipeline({ modelId, device, reportProgress }) {
         if (!report) return;
 
         if (data.status === 'progress' && data.total > 0) {
+          hadDownloadProgress = true;
           const pct = Math.round((data.loaded / data.total) * 100);
           report({
             phase: 'loading',
             label: data.file ? `Descargando ${data.file}` : 'Descargando modelo',
             percent: pct,
+            fromCache: false,
           });
         } else if (data.status === 'done') {
           // Archivo individual completado
           report({
             phase: 'loading',
             label: `Completado: ${data.file || 'archivo'}`,
-            percent: null, // No sabemos el porcentaje total aún
+            percent: null,
+            fromCache: false,
           });
         } else if (data.status === 'ready') {
           report({
             phase: 'loading',
             label: 'Modelo listo',
             percent: 100,
+            fromCache: !hadDownloadProgress,
           });
         }
       },
@@ -114,11 +126,20 @@ async function ensurePipeline({ modelId, device, reportProgress }) {
 
     currentConfig = { modelId, device: resolvedDevice };
 
+    // Determinar si cargó desde caché (rápido y sin eventos de descarga)
+    const loadTime = Date.now() - startTime;
+    const loadedFromCache = !hadDownloadProgress || loadTime < 2000;
+
     if (report) {
-      report({ phase: 'loading', label: 'Modelo listo', percent: 100 });
+      report({ 
+        phase: 'ready', 
+        label: loadedFromCache ? 'Modelo cargado desde caché' : 'Modelo descargado', 
+        percent: 100,
+        fromCache: loadedFromCache,
+      });
     }
 
-    console.log(`[Worker] Pipeline listo: ${modelId} en ${resolvedDevice}`);
+    console.log(`[Worker] Pipeline listo: ${modelId} en ${resolvedDevice} (cache: ${loadedFromCache})`);
     return featureExtractionPipeline;
   } catch (err) {
     console.error('[Worker] Error inicializando pipeline:', err);

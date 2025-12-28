@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { $modelStatus, $saveStatus } from '@/store/editor-store';
 import { BtnSaveDoc } from './btn-save-doc';
 import { ModeToggle } from './ui/mode-toggle';
-import { useEditorActions, ensureModelReady } from './editor-actions';
+import { useEditorActions } from './editor-actions';
 import { Button } from './ui/button';
 import { DocumentInfo } from './document-info';
 import {

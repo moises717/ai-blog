@@ -17,8 +17,6 @@ interface GlobalHeaderProps {
 function GlobalHeader({
     showSearch = true,
     showHome = true,
-    isLoading = false,
-    isSearching = false,
     initialQuery = '',
     className
 }: GlobalHeaderProps) {
@@ -37,8 +35,6 @@ function GlobalHeader({
         window.addEventListener('search:state' as any, handleSearchState);
         return () => window.removeEventListener('search:state' as any, handleSearchState);
     }, []);
-
-    const isBusy = isLoading || isSearching || localSearching;
 
     useEffect(() => {
         const handleScroll = () => {
@@ -102,7 +98,7 @@ function GlobalHeader({
                     <div className="flex items-center gap-3 z-20">
                         {showHome && (
                             <a href="/" className="flex items-center gap-2.5 group">
-                                <div className="size-8 rounded-lg bg-gradient-to-br from-foreground/90 to-foreground/70 dark:from-foreground/80 dark:to-foreground/60 flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
+                                <div className="size-8 rounded-lg bg-linear-to-br from-foreground/90 to-foreground/70 dark:from-foreground/80 dark:to-foreground/60 flex items-center justify-center shadow-sm group-hover:shadow-md transition-shadow">
                                     <HomeIcon
                                         size={16}
                                         className="text-background group-hover:scale-110 transition-transform"

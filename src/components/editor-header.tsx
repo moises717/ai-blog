@@ -43,10 +43,6 @@ function ManagementBar() {
   const modelStatus = useStore($modelStatus);
   const saveStatus = useStore($saveStatus);
 
-  // NOTA: El modelo de embeddings ahora se carga de forma diferida (lazy)
-  // Solo se descargará cuando el usuario guarde un documento por primera vez
-  // Esto ahorra ~3GB de RAM al abrir la página
-
   const isBusy =
     modelStatus.phase === 'loading' || saveStatus.phase === 'saving';
 

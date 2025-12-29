@@ -34,15 +34,7 @@ export const BtnSaveDoc = () => {
         <div className='relative w-4 h-4 flex items-center justify-center'>
           <AnimatePresence mode='popLayout'>
             {isActuallySaving ? (
-              <motion.div
-                key='loading'
-                initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
-                animate={{ opacity: 1, rotate: 0, scale: 1 }}
-                exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
-                className='absolute inset-0'
-              >
-                <Spinner />
-              </motion.div>
+              <Spinner />
             ) : (
               <motion.div
                 key='icon'

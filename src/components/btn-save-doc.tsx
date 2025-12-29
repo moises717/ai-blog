@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useCallback } from 'react';
 import { useStore } from '@nanostores/react';
 import { $saveStatus } from '@/store/editor-store';
-import { useEditorActions, useSaveShortcut } from './editor-actions';
+import { useEditorActions, useSaveShortcut } from '../lib/editor-actions';
 import { cn } from '@/lib/utils';
 
 export const BtnSaveDoc = () => {

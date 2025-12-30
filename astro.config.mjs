@@ -33,4 +33,7 @@ export default defineConfig({
   },
 
   integrations: [react()],
+  server: {
+    host: '0.0.0.0',
+  },
 });

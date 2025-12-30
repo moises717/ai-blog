@@ -23,15 +23,34 @@ const PRINT_STYLES = `
   }
 `;
 
-export async function exportToPdf(): Promise<void> {
-  const crepe = editorInstance.get();
-  if (!crepe) return;
+interface ExportOptions {
+  title?: string;
+  markdown?: string;
+}
 
-  const rawMarkdown = await crepe.getMarkdown();
-  const title = inferTitle(rawMarkdown);
+/**
+ * Exporta el contenido actual del editor o los datos proporcionados a PDF.
+ * Si se proporciona title/markdown, los usa directamente (modo readonly).
+ * Si no, obtiene el contenido del editorInstance (modo edición).
+ */
+export async function exportToPdf(options?: ExportOptions): Promise<void> {
+  let title: string;
+  let editorElement: Element | null;
 
-  // Obtenemos el contenido real del editor
-  const editorElement = document.querySelector(".milkdown .ProseMirror");
+  if (options?.title && options?.markdown) {
+    // Modo readonly: usar los datos proporcionados
+    title = options.title;
+    editorElement = document.querySelector(".milkdown .ProseMirror");
+  } else {
+    // Modo edición: obtener del editorInstance
+    const crepe = editorInstance.get();
+    if (!crepe) return;
+
+    const rawMarkdown = await crepe.getMarkdown();
+    title = inferTitle(rawMarkdown);
+    editorElement = document.querySelector(".milkdown .ProseMirror");
+  }
+
   if (!editorElement) return;
 
   // 1. Crear un Iframe oculto

@@ -2,7 +2,7 @@
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/frame.css";
 import Layout from "@/layouts/layout.astro";
-import { GlobalHeader } from "@/components/GlobalHeader";
+import { PostHeader } from "@/components/PostHeader";
 import { getDb } from "@/db/client";
 import { documents } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -38,7 +38,12 @@ if (!post) {
 
 <Layout title={post.title}>
   <div class="w-full flex flex-col gap-6">
-    <GlobalHeader showSearch={false} client:load />
+    <PostHeader
+      title={post.title}
+      rawMarkdown={post.rawMarkdown || ""}
+      slug={post.slug}
+      client:load
+    />
 
     <div class="w-full max-w-4xl mx-auto px-1">
       <!-- Back navigation and metadata -->
